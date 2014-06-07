@@ -29,12 +29,15 @@ class Displayer:
 
             if not self.slideQueue.empty():
                 curSlide = nextSlide
-                nextSlide = Pi3dSlide(slideQueue.get(), self.display, self.shader)
+                nextSlide = Pi3dSlide(slideQueue.get()['image'], self.display, self.shader)
                 curSlide.startFadeOut()
                 nextSlide.startFadeIn()
 
             curSlide.draw()
             nextSlide.draw()
+
+            # Yield CPU
+            time.sleep(0.001)
 
     def __del__(self):
         self.display.destroy()

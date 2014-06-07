@@ -34,6 +34,9 @@ class PhotoMetadataStore:
         self.c.execute("SELECT path FROM photos ORDER BY RANDOM() LIMIT 1")
         return self.c.fetchone()[0]
 
+    def setPhotoPaths(self, paths):
+        print(paths)
+
     def __del__(self):
         self.connection.close()
 

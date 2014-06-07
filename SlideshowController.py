@@ -16,11 +16,18 @@ class SlideshowController:
         # Contains a slide that should be transitioned in immediately.
         self.showQueue = queue.Queue()
 
-    def run(self):
-        db = PhotoMetadataStore(config.RESOURCE_DIR + "/dropbox_photos.db")
-        db.tryCreateDB()
+        # Allows another thread (the webserver) to update the configuration, like paths from which to load folders.
+        self.configQueue = queue.Queue()
 
-        sync = DropboxSync(config.DROPBOX_APP_KEY, config.DROPBOX_APP_SECRET, db, config.DROPBOX_PATH_PREFIX)
+    def processConfig(self, config):
+        if config['paths']:
+            self.db.setPhotoPaths(config['paths'])
+
+    def run(self):
+        self.db = PhotoMetadataStore(config.RESOURCE_DIR + "/dropbox_photos.db")
+        self.db.tryCreateDB()
+
+        sync = DropboxSync(config.DROPBOX_APP_KEY, config.DROPBOX_APP_SECRET, self.db, config.DROPBOX_PATH_PREFIX)
         sync.loadCursor()
 
         timeSinceLastSync = time.time()
@@ -37,6 +44,10 @@ class SlideshowController:
                     print("There was an error polling for Dropbox changes.")
                     raise
 
+            # Check if there are any config changes
+            while not self.configQueue.empty():
+                self.processConfig(self.configQueue.get());
+
             # Check if we should advance the slide
             if ((not hasDoneInitialRun) or (time.time() - lastTransitionStart) >= config.HOLD_TIME) and not self.loadQueue.empty():
                 lastTransitionStart = time.time()
@@ -45,11 +56,14 @@ class SlideshowController:
             # Check if we should load any new images
             if self.loadQueue.qsize() < config.MAX_IMAGES_IN_BUFFER:
                 try:
-                    filename = db.getRandomPhoto()
+                    filename = self.db.getRandomPhoto()
                     image = Image.open(cStringIO.StringIO(sync.getFile(filename)))
-                    self.loadQueue.put(image)
+                    self.loadQueue.put({'image' : image, 'filename' : filename})
                 except:
                     print("There was an error fetching a random photo.")
                     raise
+
+            # Take some pressure off the CPU
+            time.sleep(0.5)
 
             hasDoneInitialRun = True

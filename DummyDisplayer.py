@@ -14,5 +14,7 @@ class Displayer:
     def run(self):
         while True:
             if not self.slideQueue.empty():
-            	self.slideQueue.get()
-            	print('Switching slides!')
+            	print(self.slideQueue.get()['filename'])
+
+            # Yield CPU
+            time.sleep(0.1)
