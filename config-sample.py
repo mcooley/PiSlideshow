@@ -1,3 +1,5 @@
+import os
+
 # You can find these at http://www.dropbox.com/developers/apps
 DROPBOX_APP_KEY = '<<YOUR KEY HERE>>'
 DROPBOX_APP_SECRET = '<<YOUR SECRET HERE>>'

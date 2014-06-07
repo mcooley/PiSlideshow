@@ -1,62 +1,58 @@
-import pi3d, time, config
+from __future__ import absolute_import, division, print_function, unicode_literals
 
-# Setup display and initialise pi3d
-DISPLAY = pi3d.Display.create(background=(0.0, 0.0, 0.0, 1.0), frames_per_second=20)
-SHADER = pi3d.Shader("2d_flat")
+import pi3d, time, os, sys, ctypes, config
+from PIL import Image
 
-class Slide(pi3d.Canvas):
-  def __init__(self, filename):
-    super(Slide, self).__init__()
-    self.fadeDirectionUp = True
-    self.isAnimating = False
+class Displayer:
+    def __init__(self, slideQueue):
+        self.slideQueue = slideQueue
 
-    self.set_shader(SHADER)
+        # Setup display and initialise pi3d
+        self.display = pi3d.Display.create(background=(0.0, 0.0, 0.0, 1.0), frames_per_second=20)
+        self.shader = pi3d.Shader("2d_flat")
 
-    tex = DropboxImage(filename, blend=True, mipmap=True)
-    xrat = DISPLAY.width/tex.ix
-    yrat = DISPLAY.height/tex.iy
-    if yrat < xrat:
-      xrat = yrat
-    wi, hi = tex.ix * xrat, tex.iy * xrat
-    xi = (DISPLAY.width - wi)/2
-    yi = (DISPLAY.height - hi)/2
-    self.set_texture(tex)
-    self.set_2d_size(w=wi, h=hi, x=xi, y=yi)
-    self.set_alpha(0)
+    def run(self):
+        camera = pi3d.Camera.instance()
+        camera.was_moved = False #to save a tiny bit of work each loop
 
-  def startFadeIn(self):
-    self.positionZ(0.5)
-    self.fadeDirectionUp = True
-    self.isAnimating = True
+        curSlide = LoadingSlide(self.display, self.shader);
+        nextSlide = LoadingSlide(self.display, self.shader);
 
-  def startFadeOut(self):
-    self.positionZ(0.6)
-    self.fadeDirectionUp = False
-    self.isAnimating = True
+        nextSlide.set_alpha(1.0)
+        curSlide.startFadeOut()
+        nextSlide.startFadeIn()
 
-  def step(self):
-    if self.isAnimating:
-        if self.fadeDirectionUp:
-	    newAlpha = self.alpha() + config.ALPHA_STEP
-	else:
-	    newAlpha = self.alpha() - config.ALPHA_STEP  
-	self.set_alpha(newAlpha)
-	if newAlpha >= 1.0 or newAlpha <= 0.0:
-	    self.isAnimating = False
+        while self.display.loop_running():
+            if curSlide.isAnimating or nextSlide.isAnimating:
+                nextSlide.step()
+                curSlide.step()
 
-class DropboxImage(pi3d.Texture):
+            if not self.slideQueue.empty():
+                curSlide = nextSlide
+                nextSlide = Pi3dSlide(slideQueue.get(), self.display, self.shader)
+                curSlide.startFadeOut()
+                nextSlide.startFadeIn()
+
+            curSlide.draw()
+            nextSlide.draw()
+
+    def __del__(self):
+        self.display.destroy()
+
+# A pi3d texture which takes a PIL image directly instead of loading from disk.
+class MemTexture(pi3d.Texture):
+  def __init__(self, image, blend=False, flip=False, size=0, defer=True, mipmap=True):
+    super(MemTexture, self).__init__('', blend=blend, flip=flip, size=size, defer=defer, mipmap=mipmap)
+    self.memImage = image
+
   def _load_disk(self):
-    from PIL import Image
     from pi3d.Texture import MAX_SIZE
     from pi3d.Texture import WIDTHS
-    VERBOSE = False
     import ctypes
 
-    s = self.file_string + ' '
-    im = Image.open(cStringIO.StringIO(sync.getFile(self.file_string)))
+    im = self.memImage
 
     self.ix, self.iy = im.size
-    s += '(%s)' % im.mode
     self.alpha = (im.mode == 'RGBA' or im.mode == 'LA')
 
     if self.mipmap:
@@ -78,9 +74,6 @@ class DropboxImage(pi3d.Texture):
         self.ix, self.iy = im.size
         break
 
-    if VERBOSE:
-      print('Loading ...{}'.format(s))
-
     if self.flip:
       im = im.transpose(Image.FLIP_TOP_BOTTOM)
 
@@ -88,42 +81,59 @@ class DropboxImage(pi3d.Texture):
     self.image = im.convert(RGBs).tostring('raw', RGBs)
     self._tex = ctypes.c_int()
 
-def displayLoop(slideQueue):
 
-    # Fetch key presses (kills logging to stdout!)
-    #mykeys = pi3d.Keyboard()
+class LoadingSlide(Pi3dSlide):
+    def __init__(self, display, shader):
+        super(Slide, self).__init__(display, shader)
 
-    CAMERA = pi3d.Camera.instance()
-    CAMERA.was_moved = False #to save a tiny bit of work each loop
+        self.loadTexture(pi3d.Texture(os.path.dirname(os.path.realpath(__file__)) + '/Loading.jpg', blend=True, mipmap=True))
 
-    curSlide = Slide("/family photos/christmas years/2005 christmas pix.jpg") #TODO: find a better way to prime the sequence
-    nextSlide = Slide("/family photos/christmas years/2005 christmas pix.jpg")
 
-    nextSlide.set_alpha(1.0)
-    curSlide.startFadeOut()
-    nextSlide.startFadeIn()
+class ImageSlide(Pi3dSlide):
+    def __init__(self, image, display, shader):
+        super(Slide, self).__init__(display, shader)
 
-    lastTransitionStart = time.time()
+        self.loadTexture(MemTexture(image, blend=True, mipmap=True))
 
-    while DISPLAY.loop_running():
-        #k = mykeys.read()
-        k = -1
-        if k==27: #ESC
-            mykeys.close()
-            DISPLAY.stop()
-            break
 
-        if curSlide.isAnimating or nextSlide.isAnimating:
-            nextSlide.step()
-            curSlide.step()
-        elif (time.time() - lastTransitionStart) >= config.HOLD_TIME and not slideQueue.empty():
-            lastTransitionStart = time.time()
-            curSlide = nextSlide
-            nextSlide = slideQueue.get()
-            curSlide.startFadeOut()
-            nextSlide.startFadeIn()
+class Pi3dSlide(pi3d.Canvas):
+    def __init__(self, image, display, shader):
+        super(Slide, self).__init__()
+        self.fadeDirectionUp = True
+        self.isAnimating = False
 
-        curSlide.draw()
-        nextSlide.draw()
+        self.set_shader(shader)
 
-    DISPLAY.destroy()
+        self.set_alpha(0)
+
+    def loadTexture(self, texture):
+        xrat = display.width/texture.ix
+        yrat = display.height/texture.iy
+        if yrat < xrat:
+            xrat = yrat
+        wi, hi = texture.ix * xrat, texture.iy * xrat
+        xi = (display.width - wi)/2
+        yi = (display.height - hi)/2
+        self.set_texture(texture)
+        self.set_2d_size(w=wi, h=hi, x=xi, y=yi)
+
+    def startFadeIn(self):
+        self.positionZ(0.5)
+        self.fadeDirectionUp = True
+        self.isAnimating = True
+
+    def startFadeOut(self):
+        self.positionZ(0.6)
+        self.fadeDirectionUp = False
+        self.isAnimating = True
+
+    def step(self):
+        if self.isAnimating:
+            if self.fadeDirectionUp:
+                newAlpha = self.alpha() + config.ALPHA_STEP
+            else:
+                newAlpha = self.alpha() - config.ALPHA_STEP
+            self.set_alpha(newAlpha)
+            if newAlpha >= 1.0 or newAlpha <= 0.0:
+                self.isAnimating = False
+    
