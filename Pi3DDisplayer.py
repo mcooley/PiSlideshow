@@ -29,94 +29,36 @@ class Displayer:
 
             if not self.slideQueue.empty():
                 curSlide = nextSlide
-                nextSlide = Pi3dSlide(slideQueue.get()['image'], self.display, self.shader)
+                nextSlide = ImageSlide(self.slideQueue.get()['image'], self.display, self.shader)
+                lastTransitionStart = time.time()
                 curSlide.startFadeOut()
                 nextSlide.startFadeIn()
 
-            curSlide.draw()
             nextSlide.draw()
-
-            # Yield CPU
-            time.sleep(0.001)
+            curSlide.draw()
 
     def __del__(self):
         self.display.destroy()
 
-# A pi3d texture which takes a PIL image directly instead of loading from disk.
-class MemTexture(pi3d.Texture):
-  def __init__(self, image, blend=False, flip=False, size=0, defer=True, mipmap=True):
-    super(MemTexture, self).__init__('', blend=blend, flip=flip, size=size, defer=defer, mipmap=mipmap)
-    self.memImage = image
-
-  def _load_disk(self):
-    from pi3d.Texture import MAX_SIZE
-    from pi3d.Texture import WIDTHS
-    import ctypes
-
-    im = self.memImage
-
-    self.ix, self.iy = im.size
-    self.alpha = (im.mode == 'RGBA' or im.mode == 'LA')
-
-    if self.mipmap:
-      resize_type = Image.BICUBIC
-    else:
-      resize_type = Image.NEAREST
-
-    # work out if sizes > MAX_SIZE or coerce to golden values in WIDTHS
-    if self.iy > self.ix and self.iy > MAX_SIZE: # fairly rare circumstance
-      im = im.resize((int((MAX_SIZE * self.ix) / self.iy), MAX_SIZE))
-      self.ix, self.iy = im.size
-    n = len(WIDTHS)
-    for i in xrange(n-1, 0, -1):
-      if self.ix == WIDTHS[i]:
-        break # no need to resize as already a golden size
-      if self.ix > WIDTHS[i]:
-        im = im.resize((WIDTHS[i-1], int((WIDTHS[i-1] * self.iy) / self.ix)),
-                        resize_type)
-        self.ix, self.iy = im.size
-        break
-
-    if self.flip:
-      im = im.transpose(Image.FLIP_TOP_BOTTOM)
-
-    RGBs = 'RGBA' if self.alpha else 'RGB'
-    self.image = im.convert(RGBs).tostring('raw', RGBs)
-    self._tex = ctypes.c_int()
-
-
-class LoadingSlide(Pi3dSlide):
-    def __init__(self, display, shader):
-        super(Slide, self).__init__(display, shader)
-
-        self.loadTexture(pi3d.Texture(os.path.dirname(os.path.realpath(__file__)) + '/Loading.jpg', blend=True, mipmap=True))
-
-
-class ImageSlide(Pi3dSlide):
-    def __init__(self, image, display, shader):
-        super(Slide, self).__init__(display, shader)
-
-        self.loadTexture(MemTexture(image, blend=True, mipmap=True))
-
-
 class Pi3dSlide(pi3d.Canvas):
-    def __init__(self, image, display, shader):
-        super(Slide, self).__init__()
+    def __init__(self, display, shader):
+        super(Pi3dSlide, self).__init__()
         self.fadeDirectionUp = True
         self.isAnimating = False
 
+        self.display = display
         self.set_shader(shader)
 
         self.set_alpha(0)
 
     def loadTexture(self, texture):
-        xrat = display.width/texture.ix
-        yrat = display.height/texture.iy
+        xrat = self.display.width/texture.ix
+        yrat = self.display.height/texture.iy
         if yrat < xrat:
             xrat = yrat
         wi, hi = texture.ix * xrat, texture.iy * xrat
-        xi = (display.width - wi)/2
-        yi = (display.height - hi)/2
+        xi = (self.display.width - wi)/2
+        yi = (self.display.height - hi)/2
         self.set_texture(texture)
         self.set_2d_size(w=wi, h=hi, x=xi, y=yi)
 
@@ -136,7 +78,26 @@ class Pi3dSlide(pi3d.Canvas):
                 newAlpha = self.alpha() + config.ALPHA_STEP
             else:
                 newAlpha = self.alpha() - config.ALPHA_STEP
-            self.set_alpha(newAlpha)
-            if newAlpha >= 1.0 or newAlpha <= 0.0:
+
+            if newAlpha >= 1.0:
+                self.set_alpha(1.0)
                 self.isAnimating = False
+            elif newAlpha <= 0.0:
+                self.set_alpha(0.0)
+                self.isAnimating = False
+            else:
+                self.set_alpha(newAlpha)
+
+class LoadingSlide(Pi3dSlide):
+    def __init__(self, display, shader):
+        super(LoadingSlide, self).__init__(display, shader)
+
+        self.loadTexture(pi3d.Texture(os.path.dirname(os.path.realpath(__file__)) + '/Loading.jpg', blend=True, mipmap=True))
+
+
+class ImageSlide(Pi3dSlide):
+    def __init__(self, image, display, shader):
+        super(ImageSlide, self).__init__(display, shader)
+
+        self.loadTexture(pi3d.Texture(image, blend=True, mipmap=True, defer=False))
     

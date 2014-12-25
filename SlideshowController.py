@@ -1,6 +1,6 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-import time, os, sys, sqlite3, cStringIO
+import time, os, sys, sqlite3, cStringIO, threading
 from six.moves import queue
 from PIL import Image
 
@@ -64,6 +64,7 @@ class SlideshowController:
                     raise
 
             # Take some pressure off the CPU
-            time.sleep(0.5)
+            dummyEvent = threading.Event()
+            dummyEvent.wait(0.5)
 
             hasDoneInitialRun = True
